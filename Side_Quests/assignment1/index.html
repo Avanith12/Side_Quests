@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>CS460.org Assignment 1</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        :root {
+            --bg: #0b0b10;
+            --bg-grad1: rgba(122, 162, 255, .12);
+            --bg-grad2: rgba(255, 105, 180, .10);
+            --text: #e9ecf1;
+            --muted: #a7afbe;
+            --accent: #7aa2ff;
+            --panel: #121420;
+            --border: 1px solid rgba(255, 255, 255, .10);
+            --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+            --radius: 18px;
+        }
+
+        /* base */
+        body {
+            margin: 0;
+            background:
+                radial-gradient(1100px 600px at 20% -10%, var(--bg-grad1), transparent 60%),
+                radial-gradient(900px 600px at 120% 0%, var(--bg-grad2), transparent 60%),
+                var(--bg);
+            color: var(--text);
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans";
+            font-size: 18px;
+            line-height: 1.55;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: clamp(28px, 4vw, 40px);
+            margin: 16px 0 8px;
+            letter-spacing: .3px;
+        }
+
+        #cube {
+            width: 72px;
+            height: 72px;
+            margin-top: 18px;
+            filter: drop-shadow(0 6px 22px rgba(0, 0, 0, .45));
+        }
+
+        .demo {
+            margin: 28px auto;
+            width: min(900px, 90%);
+            text-align: left;
+            background: linear-gradient(180deg, #131625, #0f1220);
+            border: var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: clamp(16px, 3vw, 26px);
+        }
+
+        /* screenshot */
+        #screenshot {
+            float: left;
+            margin-right: 20px;
+            margin-bottom: 18px;
+            max-width: 300px;
+            width: 45%;
+            border-radius: 14px;
+            border: var(--border);
+            box-shadow: var(--shadow);
+            object-fit: cover;
+            background: #0c0f1a;
+        }
+
+        /* sections (IDs preserved) */
+        #description,
+        #technology,
+        #comparison,
+        #ai {
+            text-align: justify;
+            color: var(--text);
+        }
+
+        #technology ul {
+            margin: 8px 0 0 18px;
+        }
+
+        a {
+            color: var(--accent);
+            text-decoration: none
+        }
+
+        a:hover {
+            text-decoration: underline
+        }
+
+        /* labels */
+        #description::before,
+        #technology::before,
+        #comparison::before,
+        #ai::before {
+            display: block;
+            margin: 8px 0 6px;
+            color: var(--muted);
+            font-size: .95em;
+        }
+
+        #description::before {
+            content: "Description";
+        }
+
+        #technology::before {
+            content: "Technology";
+        }
+
+        #comparison::before {
+            content: "Comparison";
+        }
+
+        #ai::before {
+            content: "Significance (AI)";
+        }
+
+        /* bonus */
+        #bonus {
+            width: 100%;
+            margin-top: 20px;
+            padding-top: 12px;
+            border-top: 1px dashed rgba(255, 255, 255, .12);
+        }
+
+        .bonus-grid {
+            display: grid;
+            gap: 16px;
+            grid-template-columns: 1fr;
+        }
+
+        @media (min-width:980px) {
+            .bonus-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        .viewer {
+            width: 100%;
+            height: 560px;
+            border-radius: 16px;
+            border: var(--border);
+            background: #0e1120;
+            box-shadow: var(--shadow);
+        }
+
+        .credit {
+            color: var(--muted);
+            text-align: center;
+            font-size: .9em;
+            margin: 6px 0 14px;
+        }
+
+        /* hello cube card */
+        .extra {
+            margin-top: 22px;
+            background: linear-gradient(180deg, #131625, #0f1220);
+            border: var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 16px;
+        }
+
+        .extra h2 {
+            margin: 0 0 8px;
+            text-align: center;
+            font-size: 22px;
+        }
+
+        #hello-cube {
+            width: 100%;
+            height: 320px;
+            border-radius: 14px;
+            border: var(--border);
+            background: #0e1120;
+            box-shadow: var(--shadow);
+            display: block;
+        }
+
+        /* clearfix for floated screenshot */
+        .demo::after {
+            content: "";
+            display: block;
+            clear: both;
+        }
+    </style>
+</head>
+
+<body>
+
+    <img id="cube" src="https://cs460.org/gfx/cube.png" alt="Cube">
+    <h1>RO.ME "3 DREAMS OF BLACK"</h1>
+
+    <div class="demo">
+
+        <!-- Screenshot -->
+        <img id="screenshot" src="files/image.png" alt="RO.ME screenshot"
+            onerror="this.src='https://placehold.co/600x400/0e1016/9aa4b2?text=RO.ME+Screenshot'">
+
+        <p id="description">
+            RO.ME: <em>3 Dreams of Black</em> (2011) is a landmark interactive music-video built with early WebGL +
+            JavaScript.
+            It blends low-poly worlds, generative scenes, and interactive camera moves synced to the track—pushing
+            real-time 3D
+            in the browser when plugins were still common. <strong>Impact:</strong> it showed that standard browsers
+            could render
+            3D at scale and helped kick off a wave of WebGL/three.js work across art, advertising, and storytelling.
+        </p>
+
+        <!-- NOTE: div instead of p to avoid invalid p>ul nesting -->
+        <div id="technology">
+            <ul>
+                <li>WebGL for real-time GPU rendering in the browser</li>
+                <li>JavaScript + GLSL shaders; scene-graph patterns (à la three.js)</li>
+                <li>HTML/CSS, audio sync, streamed assets (meshes/textures)</li>
+                <li>Hardware-accelerated modern browsers</li>
+            </ul>
+        </div>
+
+        <p id="comparison">
+            I compared RO.ME with <a href="https://quantumstretch.com/" target="_blank" rel="noopener">Quantum</a>.
+            Both are interactive, but the goals differ: RO.ME delivers a music-synchronized narrative on rails,
+            while Quantum uses WebGL for a product/brand presentation driven by scroll and pointer. RO.ME prioritizes
+            cinematic beats; Quantum leans on UI polish and wayfinding.
+        </p>
+
+        <p id="ai">
+            <strong>Condensed (via ChatGPT, GPT-5 Thinking):</strong> RO.ME proved that standard browsers can deliver
+            real-time 3D, audio-synchronized, cinematic experiences without plugins—accelerating WebGL/three.js adoption
+            and establishing the web as a GPU-driven medium for interactive art.
+        </p>
+
+        <!-- Bonus -->
+        <div id="bonus">
+            <h2 style="text-align:center;margin:8px 0 6px;">Bonus: Animated Models</h2>
+            <div class="credit">
+                Viewer &amp; models from <a href="https://github.com/mrdoob/rome-gltf" target="_blank"
+                    rel="noopener">mrdoob/rome-gltf</a>.
+            </div>
+
+            <div class="bonus-grid">
+                <iframe class="viewer" loading="lazy" src="viewer.html?files/models/alligator.gltf"
+                    title="Alligator model"></iframe>
+                <iframe class="viewer" loading="lazy" src="viewer.html?files/models/birds_raven.gltf"
+                    title="Raven model"></iframe>
+                <iframe class="viewer" loading="lazy" src="viewer.html?files/models/quadruped_fox.gltf"
+                    title="Fox model"></iframe>
+            </div>
+            <!-- Credit required by assignment: models & viewer based on https://github.com/mrdoob/rome-gltf -->
+        </div>
+
+        <!-- Extra: Hello Cube (nice visual, safely separate from template sections) -->
+        <div class="extra">
+            <h2>HEHEHEHEHE!!!!!</h2>
+            <canvas id="hello-cube" aria-label="Rotating cube demo"></canvas>
+        </div>
+
+    </div>
+
+    <!-- Lightweight three.js for the Hello Cube only (doesn't affect your viewer iframes) -->
+    <script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+    <script>
+        (() => {
+            const canvas = document.getElementById('hello-cube');
+            const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0e1120);
+
+            const camera = new THREE.PerspectiveCamera(50, 2, 0.1, 100);
+            camera.position.set(0, 0, 3.2);
+
+            // lights
+            const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 1.1);
+            scene.add(hemi);
+            const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+            dir.position.set(3, 4, 5);
+            scene.add(dir);
+
+            // cube
+            const geo = new THREE.BoxGeometry(1, 1, 1);
+            const mat = new THREE.MeshStandardMaterial({ metalness: 0.1, roughness: 0.35, color: 0x7aa2ff });
+            const cube = new THREE.Mesh(geo, mat);
+            scene.add(cube);
+
+            function resize() {
+                const w = canvas.clientWidth;
+                const h = canvas.clientHeight;
+                if (canvas.width !== w || canvas.height !== h) {
+                    renderer.setSize(w, h, false);
+                    camera.aspect = w / h; camera.updateProjectionMatrix();
+                }
+            }
+
+            let tPrev = 0;
+            function tick(t) {
+                t *= 0.001;
+                const dt = t - tPrev; tPrev = t;
+                resize();
+
+                // gentle spin
+                cube.rotation.x += dt * 0.8;
+                cube.rotation.y += dt * 1.1;
+
+                renderer.render(scene, camera);
+                requestAnimationFrame(tick);
+            }
+            requestAnimationFrame(tick);
+
+            // handle page visibility to save GPU
+            document.addEventListener('visibilitychange', () => {
+                renderer.setAnimationLoop(document.hidden ? null : (time) => tick(time));
+            });
+        })();
+    </script>
+</body>
+
+</html>
