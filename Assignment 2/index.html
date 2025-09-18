@@ -1,0 +1,156 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>CS460 – Assignment 2: 3D Art (XTK)</title>
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            background: #000;
+        }
+
+        #scene {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .hud {
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            color: #ddd;
+            font: 12px/1.45 system-ui, sans-serif;
+            background: rgba(0, 0, 0, .5);
+            padding: 8px 10px;
+            border-radius: 8px;
+            user-select: none;
+        }
+
+        .hud kbd {
+            background: #222;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+    </style>
+
+    <!-- XTK (Part 1) -->
+    <script src="https://get.goXTK.com/xtk_edge.js"></script>
+    <!-- Include the XTK library. :contentReference[oaicite:1]{index=1} -->
+    <!-- loader.js (Part 7: download/upload) -->
+    <script src="loader.js"></script>
+    <!-- Use download()/upload("scene.json"). :contentReference[oaicite:2]{index=2} -->
+</head>
+
+<body>
+    <div id="scene"></div>
+    <div class="hud">
+        Hover a cube to select.<br />
+        <b>Keys</b> — <kbd>Q</kbd> hide, <kbd>W</kbd> random color, <kbd>E</kbd> rotate X +10°, <kbd>B</kbd> toggle
+        spin,
+        <kbd>O</kbd> download, <kbd>L</kbd> load, <kbd>C</kbd> save cam, <kbd>V</kbd> cycle cams.
+    </div>
+
+    <script>
+        // ===== Globals =====
+        let r;                         // renderer
+        let SELECTED_CUBE = null;      // currently hovered cube (Part 4). :contentReference[oaicite:3]{index=3}
+        let spinning = false;          // camera spinning toggle (Part 6). :contentReference[oaicite:4]{index=4}
+        window.CAMERAS = [];           // camera snapshots for C/V (bonus). :contentReference[oaicite:5]{index=5}
+        let CAM_TIMER = null;
+
+        // Spacing that produces clearly visible holes
+        const SIZE = 6;   // cube edge length (units)
+        const GAP = 3;   // empty space between cubes (edge-to-edge)
+
+        window.onload = function () {
+            // Part 1: renderer setup
+            r = new X.renderer3D();
+            r.container = 'scene';
+            r.init();
+
+            // Responsive canvas
+            r.resize(window.innerWidth, window.innerHeight);
+            window.addEventListener('resize', () => r.resize(window.innerWidth, window.innerHeight));
+
+            // Part 2: create many cubes in an 11×11×11 grid using SIZE/GAP
+            // (Define SIZE and GAP as globals; create via nested loops.) :contentReference[oaicite:6]{index=6}
+            for (let z = -5; z <= 5; z++) {
+                for (let y = -5; y <= 5; y++) {
+                    for (let x = -5; x <= 5; x++) {
+                        const cube = new X.cube();
+
+                        // Set explicit cube size so spacing is visible
+                        cube.lengthX = cube.lengthY = cube.lengthZ = SIZE;
+
+                        // Place cubes on a grid; centers spaced by SIZE+GAP
+                        cube.transform.translateX((SIZE + GAP) * x);
+                        cube.transform.translateY((SIZE + GAP) * y);
+                        cube.transform.translateZ((SIZE + GAP) * z);
+
+                        r.add(cube);
+                    }
+                }
+            }
+            // Note for the form: 11*11*11 = 1331 cubes. :contentReference[oaicite:7]{index=7}
+
+            // Part 3: move camera to (0,0,300) before rendering. :contentReference[oaicite:8]{index=8}
+            r.camera.position = [0, 0, 300];
+
+            // Part 4: Mouse picking — set SELECTED_CUBE under cursor. :contentReference[oaicite:9]{index=9}
+            r.interactor.onMouseMove = function (event) {
+                const id = r.pick(event.offsetX, event.offsetY); // uses offsetX/offsetY. :contentReference[oaicite:10]{index=10}
+                SELECTED_CUBE = (id !== 0) ? r.get(id) : null;
+            };
+
+            // Part 6: per-frame camera spin (toggled by B). :contentReference[oaicite:11]{index=11}
+            r.onRender = function () {
+                if (spinning) r.camera.rotate([1, 0]); // 1° about X each frame
+            };
+
+            r.render(); // render after camera setup. :contentReference[oaicite:12]{index=12}
+        };
+
+        // Part 5,6,7 + C/V handlers
+        window.onkeypress = function (e) {
+            const k = e.key.toLowerCase();
+
+            // Q: hide selected cube. :contentReference[oaicite:13]{index=13}
+            if (k === 'q' && SELECTED_CUBE) SELECTED_CUBE.visible = false;
+
+            // W: random color. :contentReference[oaicite:14]{index=14}
+            if (k === 'w' && SELECTED_CUBE)
+                SELECTED_CUBE.color = [Math.random(), Math.random(), Math.random()];
+
+            // E: rotate +10° about X. :contentReference[oaicite:15]{index=15}
+            if (k === 'e' && SELECTED_CUBE) SELECTED_CUBE.transform.rotateX(10);
+
+            // B: toggle camera spin. :contentReference[oaicite:16]{index=16}
+            if (k === 'b') spinning = !spinning;
+
+            // O/L: scene save/load via loader.js. :contentReference[oaicite:17]{index=17}
+            if (k === 'o') download();            // saves visible objects + cameras to scene.json
+            if (k === 'l') upload('scene.json');  // loads from 02/scene.json
+
+            // C: snapshot current camera view (bonus). :contentReference[oaicite:18]{index=18}
+            if (k === 'c') CAMERAS.push(new Float32Array(r.camera.view));
+
+            // V: start/stop cycling through saved cameras every second (bonus). :contentReference[oaicite:19]{index=19}
+            if (k === 'v') {
+                if (CAM_TIMER) { clearInterval(CAM_TIMER); CAM_TIMER = null; return; }
+                if (!CAMERAS.length) return;
+                let i = 0;
+                CAM_TIMER = setInterval(() => {
+                    r.camera.view = CAMERAS[i % CAMERAS.length];
+                    i++;
+                }, 1000);
+            }
+        };
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,171 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>CS460 – A2 Bonus: Spheres + Camera Cycling</title>
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            background: #000;
+        }
+
+        #scene {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .hud {
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            color: #ddd;
+            font: 12px/1.45 system-ui, sans-serif;
+            background: rgba(0, 0, 0, .5);
+            padding: 8px 10px;
+            border-radius: 8px;
+            user-select: none;
+        }
+
+        .hud kbd {
+            background: #222;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+    </style>
+    <!-- XTK -->
+    <script src="https://get.goXTK.com/xtk_edge.js"></script>
+    <!-- copy loader.js into this folder too -->
+    <script src="loader.js"></script>
+</head>
+
+<body>
+    <div id="scene"></div>
+    <div class="hud">
+        Hover to select. Keys:
+        <kbd>Q</kbd> hide, <kbd>W</kbd> rand color, <kbd>E</kbd> rotate X +10°,
+        <kbd>B</kbd> spin, <kbd>O</kbd> download, <kbd>L</kbd> load,
+        <kbd>C</kbd> save camera, <kbd>V</kbd> cycle cameras.
+        <div id="status"></div>
+    </div>
+
+    <script>
+        // ===== Globals =====
+        let r;
+        let SELECTED = null;
+        let spinning = false;
+        window.CAMERAS = [];
+        let CAM_TIMER = null;
+
+        // Grid + sphere sizing
+        const GAP = 2;            // center spacing minus diameter will create visible holes
+        const R_MIN = 2.0;        // min sphere radius
+        const R_MAX = 4.0;        // max sphere radius
+        const STEP = (R_MAX * 2) + GAP; // distance between centers in the grid
+
+        // UI helper
+        const statusEl = () => document.getElementById('status');
+        const setStatus = () => {
+            const spinningTxt = spinning ? 'ON' : 'OFF';
+            const cyclingTxt = CAM_TIMER ? 'ON' : 'OFF';
+            statusEl().textContent = ` | Spin: ${spinningTxt} | Cameras saved: ${CAMERAS.length} | Cycle: ${cyclingTxt}`;
+        };
+
+        window.onload = function () {
+            r = new X.renderer3D();
+            r.container = 'scene';
+            r.init();
+
+            r.resize(window.innerWidth, window.innerHeight);
+            window.addEventListener('resize', () =>
+                r.resize(window.innerWidth, window.innerHeight)
+            );
+
+            // Build spheres (Bonus: replace cubes with spheres + random sizes)
+            for (let z = -5; z <= 5; z++) {
+                for (let y = -5; y <= 5; y++) {
+                    for (let x = -5; x <= 5; x++) {
+                        const s = new X.sphere();
+                        // random radius within [R_MIN, R_MAX]
+                        s.radius = R_MIN + Math.random() * (R_MAX - R_MIN);
+                        // random-ish palette to make it lively
+                        s.color = [Math.random(), Math.random(), Math.random()];
+
+                        // place on grid with visible space between spheres
+                        s.transform.translateX(STEP * x);
+                        s.transform.translateY(STEP * y);
+                        s.transform.translateZ(STEP * z);
+
+                        r.add(s);
+                    }
+                }
+            }
+
+            // Start with a backed-off view
+            r.camera.position = [0, 0, 300];
+
+            // Picking to select a sphere
+            r.interactor.onMouseMove = function (event) {
+                const id = r.pick(event.offsetX, event.offsetY);
+                SELECTED = (id !== 0) ? r.get(id) : null;
+            };
+
+            // Per-frame spin (toggled by B)
+            r.onRender = function () {
+                if (spinning) r.camera.rotate([1, 0]);
+            };
+
+            r.render();
+            setStatus();
+        };
+
+        // Prefer keydown (reliable across browsers)
+        window.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase();
+
+            // Hide selected
+            if (k === 'q' && SELECTED) { SELECTED.visible = false; }
+
+            // Random color for selected
+            if (k === 'w' && SELECTED) {
+                SELECTED.color = [Math.random(), Math.random(), Math.random()];
+            }
+
+            // Rotate selected +10° about X
+            if (k === 'e' && SELECTED) { SELECTED.transform.rotateX(10); }
+
+            // Toggle spin
+            if (k === 'b') { spinning = !spinning; setStatus(); }
+
+            // Save / Load (remember: must be served over http/https)
+            if (k === 'o') { download(); }
+            if (k === 'l') { upload('scene.json'); }
+
+            // Save current camera view
+            if (k === 'c') {
+                CAMERAS.push(new Float32Array(r.camera.view));
+                setStatus();
+            }
+
+            // Start/stop cycling through saved views every second
+            if (k === 'v') {
+                if (CAM_TIMER) {
+                    clearInterval(CAM_TIMER); CAM_TIMER = null; setStatus(); return;
+                }
+                if (!CAMERAS.length) { return; }
+                let i = 0;
+                CAM_TIMER = setInterval(() => {
+                    r.camera.view = CAMERAS[i % CAMERAS.length];
+                    i++;
+                }, 1000);
+                setStatus();
+            }
+        });
+    </script>
+</body>
+
+</html>
