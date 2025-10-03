@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CS460 A3 — Torus World (single on load)</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+        }
+
+        #info {
+            position: fixed;
+            left: 12px;
+            top: 12px;
+            color: #eaeaea;
+            font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+            background: rgba(0, 0, 0, .45);
+            padding: 10px 12px;
+            border-radius: 10px;
+            backdrop-filter: blur(2px);
+        }
+
+        #info kbd {
+            background: #222;
+            padding: 2px 6px;
+            border-radius: 6px;
+            border: 1px solid #444;
+        }
+    </style>
+
+    <!-- Map 'three' (used by OrbitControls) to your local copy -->
+    <script type="importmap">
+  { "imports": { "three": "./Libs/three.module.js" } }
+  </script>
+</head>
+
+<body>
+    <div id="info">
+        <div><strong>Controls</strong></div>
+        <div>• <kbd>Shift</kbd> + Left-click to place a torus at the mouse point.</div>
+        <div>• While holding mouse: drag <em>up/down</em> to scale (crossing zero flips pink/green).</div>
+        <div>• Release mouse to stop scaling and re-enable orbit.</div>
+        <div>• Keys: <kbd>f</kbd> flicker, <kbd>w</kbd> wireframe, <kbd>r</kbd> reset, <kbd>g</kbd> grid toggle.</div>
+    </div>
+
+    <script type="module">
+        import * as THREE from "./Libs/three.module.js";
+        import { OrbitControls } from "./Libs/OrbitControls.js";
+
+        // Scene / camera / renderer
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x000000);
+
+        const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        function frameCamera() {
+            controls.target.set(0, 1.2, 0);
+            camera.position.set(10, 8, 14);
+            camera.lookAt(controls.target);
+            controls.update();
+        }
+        frameCamera();
+
+        // Lighting
+        scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+        const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+        dir.position.set(8, 12, 8);
+        scene.add(dir);
+
+        // Grid helper (hidden by default; press 'g' to show)
+        const planeSize = 200;
+        const grid = new THREE.GridHelper(planeSize, planeSize / 2, 0x555555, 0x333333);
+        grid.visible = false;
+        scene.add(grid);
+
+        // Colors
+        const HOTPINK = 0xFF69B4, GRASSGREEN = 0x7CFC00, YELLOW = 0xFFD400;
+
+        // Raycasting to invisible ground plane (y=0)
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+        // State
+        const TORI = [];
+        let LASTOBJECT = null, lastScaleSign = 1, isPlacing = false, FLICKERING = false;
+
+        // Torus factory
+        function makeTorusKnot(color = HOTPINK) {
+            const geom = new THREE.TorusKnotGeometry(1.2, 0.45, 160, 32, 2, 3);
+            const mat = new THREE.MeshStandardMaterial({ color, metalness: 0.2, roughness: 0.35 });
+            const m = new THREE.Mesh(geom, mat);
+            m.position.y = 1.5;
+            m.userData.colorState = (color === HOTPINK) ? 'pink' : (color === GRASSGREEN ? 'green' : 'other');
+            return m;
+        }
+
+        // Spawn just one torus on load (yellow like the PDF)
+        function spawnOneAtCenter() {
+            const t = makeTorusKnot(YELLOW);
+            t.position.set(0, 1.5, 0);
+            scene.add(t); TORI.push(t);
+        }
+        spawnOneAtCenter();
+
+        function groundPoint(e) {
+            const r = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+            mouse.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const p = new THREE.Vector3();
+            raycaster.ray.intersectPlane(groundPlane, p);
+            return p;
+        }
+        function toggleWireframe() { TORI.forEach(m => { m.material.wireframe = !m.material.wireframe; m.material.needsUpdate = true; }); }
+        function setAllOpacity(a) { TORI.forEach(m => { m.material.opacity = a; m.material.transparent = a < 1; m.material.needsUpdate = true; }); }
+
+        // Interactions
+        renderer.domElement.addEventListener('mousedown', (e) => {
+            const primary = (e.button === 0) || ((e.buttons & 1) === 1);
+            if (!e.shiftKey || !primary) return;
+            e.preventDefault();
+
+            controls.enabled = false; isPlacing = true;
+            const p = groundPoint(e);
+            const t = makeTorusKnot(HOTPINK); // new placements start pink
+            t.position.copy(p);
+            scene.add(t); TORI.push(t);
+
+            LASTOBJECT = t; lastScaleSign = Math.sign(t.scale.x) || 1;
+        });
+
+        renderer.domElement.addEventListener('mousemove', (e) => {
+            if (!isPlacing || !LASTOBJECT) return;
+            const delta = -e.movementY * 0.01;
+            LASTOBJECT.scale.addScalar(delta);
+
+            const newSign = Math.sign(LASTOBJECT.scale.x) || 1;
+            if (newSign !== lastScaleSign) {
+                if (LASTOBJECT.userData.colorState === 'pink') {
+                    LASTOBJECT.material.color.set(GRASSGREEN); LASTOBJECT.userData.colorState = 'green';
+                } else {
+                    LASTOBJECT.material.color.set(HOTPINK); LASTOBJECT.userData.colorState = 'pink';
+                }
+                LASTOBJECT.material.needsUpdate = true;
+                lastScaleSign = newSign;
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (!isPlacing) return;
+            isPlacing = false; controls.enabled = true; LASTOBJECT = null;
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+            renderer.setSize(innerWidth, innerHeight);
+        });
+
+        window.addEventListener('keypress', (e) => {
+            const k = (e.key || '').toLowerCase();
+            if (k === 'f') { FLICKERING = !FLICKERING; if (!FLICKERING) setAllOpacity(1); }
+            else if (k === 'w') toggleWireframe();
+            else if (k === 'r') frameCamera();
+            else if (k === 'g') grid.visible = !grid.visible;
+        });
+
+        // Animate
+        const clock = new THREE.Clock();
+        (function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            if (FLICKERING && TORI.length) {
+                const t = clock.getElapsedTime();
+                TORI.forEach((m, i) => {
+                    const base = 0.45 + 0.4 * (0.5 + 0.5 * Math.sin(t * 3 + i));
+                    m.material.opacity = Math.max(0.1, Math.min(1, base * Math.random()));
+                    m.material.transparent = m.material.opacity < 1;
+                    m.material.needsUpdate = true;
+                });
+            }
+            renderer.render(scene, camera);
+        })();
+    </script>
+</body>
+
+</html>
