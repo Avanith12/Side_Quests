@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Flashy Fish — Bonus Edition</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden !important;
+        }
+
+        /* Assignment background image */
+        body {
+            background: url('https://cs460.org/assignments/04/bg.jpg');
+            background-size: cover;
+            /* Day–night cycle */
+            animation: dayNight 20s linear infinite;
+        }
+
+        @keyframes dayNight {
+            0% {
+                filter: brightness(1.00) hue-rotate(0deg);
+            }
+
+            50% {
+                filter: brightness(0.80) hue-rotate(12deg);
+            }
+
+            100% {
+                filter: brightness(1.00) hue-rotate(0deg);
+            }
+        }
+
+        /* Subtle parallax light overlay */
+        .parallax {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(ellipse at 50% 120%, rgba(20, 50, 120, .15), transparent 60%),
+                radial-gradient(ellipse at 20% -10%, rgba(0, 80, 160, .08), transparent 60%);
+            mix-blend-mode: screen;
+            animation: drift 30s linear infinite;
+        }
+
+        @keyframes drift {
+            0% {
+                transform: translateX(0px);
+            }
+
+            50% {
+                transform: translateX(22px);
+            }
+
+            100% {
+                transform: translateX(0px);
+            }
+        }
+
+        #c {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* HUD */
+        .hud {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            padding: 8px 12px;
+            color: #e9f6ff;
+            font: 14px/1.35 system-ui, sans-serif;
+            background: rgba(0, 0, 0, .35);
+            border: 1px solid rgba(255, 255, 255, .15);
+            border-radius: 10px;
+            backdrop-filter: blur(4px);
+            user-select: none;
+        }
+
+        .hud kbd {
+            background: #0a2745;
+            border: 1px solid #123;
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<!-- =========================
+     Shaders
+     ========================= -->
+<script id="vertexshader" type="x-shader/x-vertex">
+  attribute vec3 a_position;
+
+  uniform mat4  u_transform;   // 4x4 transform (translate+rotate+scale+flip)
+  uniform float u_pointsize;   // used for POINTS (eyes/bubbles/pellets)
+
+  void main(void) {
+    gl_Position = u_transform * vec4(a_position, 1.0);
+    gl_PointSize = u_pointsize; // ignored for TRIANGLES
+  }
+</script>
+
+<script id="fragmentshader" type="x-shader/x-fragment">
+  precision mediump float;
+
+  uniform vec4  u_color;       // RGBA for triangles/points
+  uniform float u_time;        // seconds
+  uniform vec2  u_resolution;  // canvas size
+
+  void main(void) {
+    // gentle center glow + vignette based on screen coords
+    vec2 uv = gl_FragCoord.xy / u_resolution;
+    float vignette = smoothstep(1.2, 0.30, distance(uv, vec2(0.5, 0.55)));
+    float glow     = 0.05 + 0.06 * sin(u_time * 2.0);
+    vec3  base     = u_color.rgb * (0.86 + glow) * vignette;
+    gl_FragColor   = vec4(base, u_color.a);
+  }
+</script>
+
+<script>
+    // =========================
+    // Globals
+    // =========================
+    let c, gl, shaderprogram;
+    let a_position, u_transform, u_color, u_pointsize, u_time, u_resolution;
+
+    // Fish entries: [vbuf, ibuf, eyebuf, color, offset, scale, direction, wavePhase]
+    const all_fish = [];
+    // Bubble particles: {pos:[x,y,z], size, speed, drift}
+    const bubbles = [];
+    // Food pellets: {pos:[x,y,z], size}
+    const pellets = [];
+
+    // HUD
+    let fedCount = 0;
+
+    // Keyboard control (big fish index 0)
+    const input = { left: false, right: false, up: false, down: false };
+
+    // Web Audio (sound FX, no external files)
+    let audioCtx = null;
+    function initAudio() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    function beep(freq = 440, dur = 0.10, type = 'sine', gain = 0.15) {
+        if (!audioCtx) return;
+        const t0 = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        g.gain.value = gain;
+        osc.connect(g).connect(audioCtx.destination);
+        osc.start(t0);
+        osc.stop(t0 + dur);
+        // quick fade out to avoid click
+        g.gain.setValueAtTime(gain, t0);
+        g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    }
+    function playSound(kind) {
+        initAudio();
+        if (kind === 'pellet') beep(700, 0.06, 'triangle', 0.12);
+        else if (kind === 'eat') beep(420, 0.10, 'sine', 0.16);
+        else if (kind === 'bump') beep(220, 0.08, 'square', 0.10);
+    }
+
+    // =========================
+    // Init
+    // =========================
+    window.onload = function () {
+        // Canvas / GL
+        c = document.getElementById('c');
+        c.width = window.innerWidth; c.height = window.innerHeight;
+        gl = c.getContext('webgl');
+        gl.viewport(0, 0, c.width, c.height);
+
+        // Compile/link shaders
+        const vs = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vs, document.getElementById('vertexshader').textContent);
+        gl.compileShader(vs);
+        if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) console.log(gl.getShaderInfoLog(vs));
+
+        const fs = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fs, document.getElementById('fragmentshader').textContent);
+        gl.compileShader(fs);
+        if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) console.log(gl.getShaderInfoLog(fs));
+
+        shaderprogram = gl.createProgram();
+        gl.attachShader(shaderprogram, vs);
+        gl.attachShader(shaderprogram, fs);
+        gl.linkProgram(shaderprogram);
+        gl.useProgram(shaderprogram);
+
+        // Locations
+        a_position = gl.getAttribLocation(shaderprogram, 'a_position');
+        u_transform = gl.getUniformLocation(shaderprogram, 'u_transform');
+        u_color = gl.getUniformLocation(shaderprogram, 'u_color');
+        u_pointsize = gl.getUniformLocation(shaderprogram, 'u_pointsize');
+        u_time = gl.getUniformLocation(shaderprogram, 'u_time');
+        u_resolution = gl.getUniformLocation(shaderprogram, 'u_resolution');
+
+        // HUD
+        document.getElementById('fed').textContent = fedCount;
+
+        // Input
+        window.addEventListener('keydown', e => {
+            if (e.key === 'ArrowLeft') input.left = true;
+            if (e.key === 'ArrowRight') input.right = true;
+            if (e.key === 'ArrowUp') input.up = true;
+            if (e.key === 'ArrowDown') input.down = true;
+        });
+        window.addEventListener('keyup', e => {
+            if (e.key === 'ArrowLeft') input.left = false;
+            if (e.key === 'ArrowRight') input.right = false;
+            if (e.key === 'ArrowUp') input.up = false;
+            if (e.key === 'ArrowDown') input.down = false;
+        });
+
+        // Click to drop pellet
+        c.addEventListener('click', (e) => {
+            const rect = c.getBoundingClientRect();
+            const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+            pellets.push({ pos: [x, y, 0], size: 8 });
+            playSound('pellet');
+        });
+
+        // Fish: big red (flipped)
+        all_fish.push(createFish(
+            new Float32Array([-0.2, 0.0, 0.0]),
+            new Float32Array([1.0, 0.0, 0.0, 0.7]),
+            1.0,  // scale
+            -1,   // direction
+            Math.random() * Math.PI * 2
+        ));
+
+        // Many small fish
+        for (let i = 0; i < 100; i++) {
+            const color = new Float32Array([Math.random(), Math.random(), Math.random(), 0.7]);
+            const offset = new Float32Array([Math.random() - Math.random(), Math.random() - Math.random(), 0.0]);
+            const scale = Math.random() * 0.3 + 0.05;
+            all_fish.push(createFish(offset, color, scale, 1, Math.random() * Math.PI * 2));
+        }
+
+        // Seed some bubbles
+        for (let i = 0; i < 20; i++) spawnBubble();
+
+        animate();
+    };
+
+    // =========================
+    // Geometry
+    // =========================
+    function createFish(offset, color, scale, direction, wavePhase) {
+        const vertices = new Float32Array([
+            0.5, 0.0, 0.0,  // 0
+            0.2, 0.25, 0.0,  // 1
+            -0.2, 0.15, 0.0,  // 2
+            -0.4, 0.3, 0.0,  // 3
+            -0.4, -0.3, 0.0,  // 4
+            -0.2, -0.15, 0.0,  // 5
+            0.2, -0.25, 0.0   // 6
+        ]);
+        const indices = new Uint8Array([
+            0, 1, 6, 1, 2, 6, 2, 5, 6, 2, 3, 5, 3, 4, 5
+        ]);
+
+        let eyeY = (direction === -1) ? -0.2 : 0.2;
+        const eye = new Float32Array([0.2, eyeY, 0.0]);
+
+        const vbuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vbuf);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+        const ibuf = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibuf);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
+        const eyebuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, eyebuf);
+        gl.bufferData(gl.ARRAY_BUFFER, eye, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+        return [vbuf, ibuf, eyebuf, color, offset, scale, direction, wavePhase];
+    }
+
+    // =========================
+    // Animation Loop
+    // =========================
+    function animate() {
+        requestAnimationFrame(animate);
+
+        const t = performance.now() * 0.001;
+
+        gl.viewport(0, 0, c.width, c.height);
+        gl.clearColor(0., 0., 0., 0.);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.disable(gl.DEPTH_TEST);
+
+        gl.uniform1f(u_time, t);
+        gl.uniform2f(u_resolution, c.width, c.height);
+
+        // Bubbles
+        if (Math.random() < 0.1) spawnBubble();
+        updateBubbles();
+        drawBubbles();
+
+        // Pellets
+        drawPellets();
+
+        // Keyboard control for big fish
+        const big = all_fish[0];
+        const bo = big[4];
+        if (input.left) bo[0] -= 0.02;
+        if (input.right) bo[0] += 0.02;
+        if (input.up) bo[1] += 0.02;
+        if (input.down) bo[1] -= 0.02;
+
+        // Fish update/draw
+        for (let r = 0; r < all_fish.length; r++) {
+            const f = all_fish[r];
+            const vbf = f[0], ibf = f[1], ebf = f[2];
+            let col = f[3];
+            const off = f[4];
+            const scl = f[5];
+            let dir = f[6];
+            let wav = f[7];
+
+            // Base swim + wiggle + wave
+            off[0] += 0.01;
+            off[1] += (0.1 * Math.random() - 0.1 * Math.random()) * 0.2;
+            off[1] += 0.008 * Math.sin(t * 2.0 + wav);
+            // wrap-like behavior
+            if (off[0] >= 1.0) dir = -1;
+            off[0] *= dir;
+            f[6] = dir;
+
+            // Seek nearest pellet
+            if (pellets.length > 0) {
+                let nearest = 0, nd = 1e9;
+                for (let i = 0; i < pellets.length; i++) {
+                    const dx = pellets[i].pos[0] - off[0];
+                    const dy = pellets[i].pos[1] - off[1];
+                    const d2 = dx * dx + dy * dy;
+                    if (d2 < nd) { nd = d2; nearest = i; }
+                }
+                const p = pellets[nearest];
+                const dx = p.pos[0] - off[0];
+                const dy = p.pos[1] - off[1];
+                const mag = Math.max(Math.hypot(dx, dy), 0.0001);
+                const steer = 0.005;
+                off[0] += steer * (dx / mag);
+                off[1] += steer * (dy / mag);
+                if (mag < 0.04) {
+                    pellets.splice(nearest, 1);
+                    fedCount++; document.getElementById('fed').textContent = fedCount;
+                    playSound('eat');
+                }
+            }
+
+            // Pulsating color for small fish; big stays red
+            if (r !== 0) {
+                const a = 0.6 + 0.4 * Math.sin(t * 2.0);
+                col = new Float32Array([
+                    0.3 + 0.2 * Math.sin(t + 0.0),
+                    0.6 + 0.2 * Math.sin(t + 2.0),
+                    0.9 + 0.1 * Math.sin(t + 4.0),
+                    a
+                ]);
+            } else {
+                col = new Float32Array([1.0, 0.0, 0.0, 0.7]);
+            }
+
+            // Simple neighbor bounce with next fish
+            if (r + 1 < all_fish.length) {
+                const n = all_fish[r + 1];
+                const nof = n[4];
+                const dx = off[0] - nof[0], dy = off[1] - nof[1];
+                const d2 = dx * dx + dy * dy;
+                const minD = 0.03 + (scl + n[5]) * 0.5 * 0.02;
+                if (d2 < minD * minD) {
+                    f[6] *= -1; n[6] *= -1;
+                    off[0] += dx * 0.01; off[1] += dy * 0.01;
+                    nof[0] -= dx * 0.01; nof[1] -= dy * 0.01;
+                    playSound('bump');
+                }
+            }
+
+            // Mild random rotation
+            const theta = (Math.random() * 10.0) * Math.PI / 180.0;
+            const cth = Math.cos(theta), sth = Math.sin(theta);
+            const sdir = dir * scl;
+
+            const transform = new Float32Array([
+                sdir * cth, sth, 0, 0,
+                -sth, sdir * cth, 0, 0,
+                0, 0, sdir, 0,
+                off[0], off[1], off[2] || 0.0, 1
+            ]);
+
+            // Draw triangles
+            gl.bindBuffer(gl.ARRAY_BUFFER, vbf);
+            gl.enableVertexAttribArray(a_position);
+            gl.vertexAttribPointer(a_position, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibf);
+            gl.uniformMatrix4fv(u_transform, false, transform);
+            gl.uniform4fv(u_color, col);
+            gl.uniform1f(u_pointsize, 1.0);
+            gl.drawElements(gl.TRIANGLES, 15, gl.UNSIGNED_BYTE, 0);
+
+            // Draw eye (POINT)
+            gl.uniform4fv(u_color, new Float32Array([0, 0, 0, 0.55]));
+            gl.uniform1f(u_pointsize, scl * 20.0);
+            gl.bindBuffer(gl.ARRAY_BUFFER, ebf);
+            gl.enableVertexAttribArray(a_position);
+            gl.vertexAttribPointer(a_position, 3, gl.FLOAT, false, 0, 0);
+            gl.drawArrays(gl.POINTS, 0, 1);
+        }
+    }
+
+    // =========================
+    // Bubbles
+    // =========================
+    function spawnBubble() {
+        bubbles.push({
+            pos: [Math.random() * 2 - 1, -1.05, 0.0],
+            size: 4 + Math.random() * 6,
+            speed: 0.003 + Math.random() * 0.004,
+            drift: (Math.random() * 0.004 - 0.002)
+        });
+    }
+    function updateBubbles() {
+        for (let i = bubbles.length - 1; i >= 0; i--) {
+            const b = bubbles[i];
+            b.pos[1] += b.speed;
+            b.pos[0] += b.drift * Math.sin(performance.now() * 0.001 + i);
+            if (b.pos[1] > 1.07) bubbles.splice(i, 1);
+        }
+    }
+    function drawBubbles() {
+        for (const b of bubbles) {
+            const buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(b.pos), gl.STATIC_DRAW);
+
+            const transform = new Float32Array([
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                b.pos[0], b.pos[1], b.pos[2], 1
+            ]);
+            gl.uniformMatrix4fv(u_transform, false, transform);
+            gl.uniform4fv(u_color, new Float32Array([0.75, 0.90, 1.0, 0.35]));
+            gl.uniform1f(u_pointsize, b.size);
+
+            gl.enableVertexAttribArray(a_position);
+            gl.vertexAttribPointer(a_position, 3, gl.FLOAT, false, 0, 0);
+            gl.drawArrays(gl.POINTS, 0, 1);
+
+            gl.deleteBuffer(buf);
+        }
+    }
+
+    // =========================
+    // Pellets (feeding)
+    // =========================
+    function drawPellets() {
+        for (const p of pellets) {
+            const buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(p.pos), gl.STATIC_DRAW);
+
+            const transform = new Float32Array([
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                p.pos[0], p.pos[1], p.pos[2], 1
+            ]);
+            gl.uniformMatrix4fv(u_transform, false, transform);
+            gl.uniform4fv(u_color, new Float32Array([1.0, 0.9, 0.2, 0.95]));
+            gl.uniform1f(u_pointsize, p.size);
+
+            gl.enableVertexAttribArray(a_position);
+            gl.vertexAttribPointer(a_position, 3, gl.FLOAT, false, 0, 0);
+            gl.drawArrays(gl.POINTS, 0, 1);
+
+            gl.deleteBuffer(buf);
+        }
+    }
+
+    // Resize
+    window.addEventListener('resize', () => {
+        c.width = window.innerWidth; c.height = window.innerHeight;
+        gl.viewport(0, 0, c.width, c.height);
+    });
+</script>
+
+<body>
+    <div class="parallax"></div>
+    <div class="hud">
+        <div><strong>Fish fed:</strong> <span id="fed">0</span></div>
+        <div style="margin-top:6px;">
+            <strong>Controls:</strong>
+            <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move big fish, click to drop food pellets.
+        </div>
+    </div>
+    <canvas id="c"></canvas>
+</body>
+
+</html>
