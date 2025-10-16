@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Flashy Fish — Plus Extras</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden !important;
+        }
+
+        /* (BG-1) base image — assignment-provided */
+        body {
+            background: url('https://cs460.org/assignments/04/bg.jpg');
+            background-size: cover;
+            /* (DN-1) day-night cycle via slow brightness shift */
+            animation: dayNight 20s linear infinite;
+        }
+
+        @keyframes dayNight {
+            0% {
+                filter: brightness(1.00) hue-rotate(0deg);
+            }
+
+            50% {
+                filter: brightness(0.80) hue-rotate(10deg);
+            }
+
+            100% {
+                filter: brightness(1.00) hue-rotate(0deg);
+            }
+        }
+
+        /* (PARALLAX) subtle moving overlay layer */
+        .parallax {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(ellipse at 50% 120%, rgba(20, 50, 120, .15), transparent 60%),
+                radial-gradient(ellipse at 20% -10%, rgba(0, 80, 160, .08), transparent 60%);
+            mix-blend-mode: screen;
+            animation: drift 30s linear infinite;
+        }
+
+        @keyframes drift {
+            0% {
+                transform: translateX(0px);
+            }
+
+            50% {
+                transform: translateX(20px);
+            }
+
+            100% {
+                transform: translateX(0px);
+            }
+        }
+
+        #c {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* (HUD) small overlay with scores/instructions */
+        .hud {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            padding: 8px 12px;
+            color: #e9f6ff;
+            font: 14px/1.3 system-ui, sans-serif;
+            background: rgba(0, 0, 0, .35);
+            border: 1px solid rgba(255, 255, 255, .15);
+            border-radius: 10px;
+            backdrop-filter: blur(4px);
+        }
+
+        .hud kbd {
+            background: #0a2745;
+            border: 1px solid #123;
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<!-- =========================
+     SHADERS
+     ========================= -->
+
+<script id="vertexshader" type="x-shader/x-vertex">
+  attribute vec3 a_position;
+
+  /* (MAT) 4x4 transform for translate+rotate+scale+flip */
+  uniform mat4 u_transform;
+
+  /* (POINTS) dynamic size for eyes/bubbles/pellets */
+  uniform float u_pointsize;
+
+  void main(void) {
+    gl_Position = u_transform * vec4(a_position, 1.0);
+    gl_PointSize = u_pointsize;  /* only used for gl.POINTS calls */
+  }
+</script>
+
+<script id="fragmentshader" type="x-shader/x-fragment">
+  precision mediump float;
+
+  /* (COLOR) RGBA uniform reused for triangles and points */
+  uniform vec4 u_color;
+
+  /* (TIME+RES) for glow/vignette tweak (fun visual) */
+  uniform float u_time;
+  uniform vec2  u_resolution;
+
+  void main(void) {
+    /* (LIGHT/GLOW) mild center glow + vignette using screen coords */
+    vec2 uv = gl_FragCoord.xy / u_resolution;
+    float vignette = smoothstep(1.2, 0.3, distance(uv, vec2(0.5, 0.55)));
+    float glow = 0.05 + 0.05 * sin(u_time * 2.0);
+    vec3 base = u_color.rgb * (0.85 + glow) * vignette;
+    gl_FragColor = vec4(base, u_color.a);
+  }
+</script>
+
+<script>
+    // =========================
+    // GLOBALS
+    // =========================
+    var c, gl, shaderprogram;
+    var a_position, u_transform, u_color, u_pointsize, u_time, u_resolution;
+
+    // (FISH) [v_buffer, i_buffer, eye_v_buffer, color, offset, scale, direction, wavePhase]
+    var all_fish = [];
+
+    // (BUBBLES) simple particle points: {pos:[x,y,z], size, speed}
+    var bubbles = [];
+
+    // (PELLETS) click-to-feed points; fish steer toward nearest pellet
+    var pellets = [];
+
+    // (HUD) state
+    var fedCount = 0;
+
+    // (INPUT) keyboard control for big fish (index 0)
+    var input = { left: false, right: false, up: false, down: false };
+
+    // =========================
+    // INIT
+    // =========================
+    window.onload = function () {
+        // Canvas / GL
+        c = document.getElementById('c');
+        c.width = window.innerWidth;
+        c.height = window.innerHeight;
+
+        gl = c.getContext('webgl');
+        gl.viewport(0, 0, c.width, c.height);
+
+        // Compile + link shaders
+        var v_shader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(v_shader, document.getElementById('vertexshader').textContent);
+        gl.compileShader(v_shader);
+        if (!gl.getShaderParameter(v_shader, gl.COMPILE_STATUS)) console.log(gl.getShaderInfoLog(v_shader));
+
+        var f_shader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(f_shader, document.getElementById('fragmentshader').textContent);
+        gl.compileShader(f_shader);
+        if (!gl.getShaderParameter(f_shader, gl.COMPILE_STATUS)) console.log(gl.getShaderInfoLog(f_shader));
+
+        shaderprogram = gl.createProgram();
+        gl.attachShader(shaderprogram, v_shader);
+        gl.attachShader(shaderprogram, f_shader);
+        gl.linkProgram(shaderprogram);
+        gl.useProgram(shaderprogram);
+
+        // Lookups
+        a_position = gl.getAttribLocation(shaderprogram, 'a_position');
+        u_transform = gl.getUniformLocation(shaderprogram, 'u_transform');
+        u_color = gl.getUniformLocation(shaderprogram, 'u_color');
+        u_pointsize = gl.getUniformLocation(shaderprogram, 'u_pointsize');
+        u_time = gl.getUniformLocation(shaderprogram, 'u_time');
+        u_resolution = gl.getUniformLocation(shaderprogram, 'u_resolution');
+
+        // (HUD) init
+        document.getElementById('fed').textContent = fedCount;
+
+        // (INPUT) keyboard handlers
+        window.addEventListener('keydown', e => {
+            if (e.key === 'ArrowLeft') input.left = true;
+            if (e.key === 'ArrowRight') input.right = true;
+            if (e.key === 'ArrowUp') input.up = true;
+            if (e.key === 'ArrowDown') input.down = true;
+        });
+        window.addEventListener('keyup', e => {
+            if (e.key === 'ArrowLeft') input.left = false;
+            if (e.key === 'ArrowRight') input.right = false;
+            if (e.key === 'ArrowUp') input.up = false;
+            if (e.key === 'ArrowDown') input.down = false;
+        });
+
+        // (FEED) click to drop pellet at mouse position
+        c.addEventListener('click', (e) => {
+            const rect = c.getBoundingClientRect();
+            const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;    // NDC
+            const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1); // invert Y
+            pellets.push({ pos: [x, y, 0], size: 8 });
+            playSound('pellet');
+        });
+
+        // (FISH) create big red fish (index 0), flipped left
+        all_fish.push(createFish(
+            new Float32Array([-0.2, 0.0, 0.0]),
+            new Float32Array([1.0, 0.0, 0.0, 0.7]),
+            1.0,   // scale
+            -1,    // direction (flip)
+            Math.random() * Math.PI * 2 // wave phase
+        ));
+
+        // (FISH) create ~100 small colorful fish
+        for (let i = 0; i < 100; i++) {
+            const color = new Float32Array([Math.random(), Math.random(), Math.random(), 0.7]);
+            const offset = new Float32Array([Math.random() - Math.random(), Math.random() - Math.random(), 0.0]);
+            const scale = Math.random() * 0.3 + 0.05;
+            all_fish.push(createFish(offset, color, scale, 1, Math.random() * Math.PI * 2));
+        }
+
+        // (BUBBLES) seed a few
+        for (let i = 0; i < 20; i++) spawnBubble();
+
+        animate(0);
+    };
+
+    // =========================
+    // GEOMETRY
+    // =========================
+    function createFish(offset, color, scale, direction, wavePhase) {
+        // Fish polygon: 7 verts
+        const vertices = new Float32Array([
+            0.5, 0.0, 0.0,  // 0 nose
+            0.2, 0.25, 0.0,  // 1 upper body
+            -0.2, 0.15, 0.0,  // 2 upper tail base
+            -0.4, 0.3, 0.0,  // 3 upper tail tip
+            -0.4, -0.3, 0.0,  // 4 lower tail tip
+            -0.2, -0.15, 0.0,  // 5 lower tail base
+            0.2, -0.25, 0.0   // 6 lower body
+        ]);
+
+        const indices = new Uint8Array([
+            0, 1, 6, 1, 2, 6, 2, 5, 6, 2, 3, 5, 3, 4, 5
+        ]);
+
+        // Eye (flip Y if direction == -1)
+        let eyeY = (direction === -1) ? -0.2 : 0.2;
+        const eye_vertex = new Float32Array([0.2, eyeY, 0.0]);
+
+        // VBO
+        const v_buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, v_buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+        // IBO
+        const i_buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, i_buffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
+        // Eye VBO
+        const eye_v_buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, eye_v_buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, eye_vertex, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+        return [v_buffer, i_buffer, eye_v_buffer, color, offset, scale, direction, wavePhase];
+    }
+
+    // =========================
+    // ANIMATION LOOP
+    // =========================
+    function animate(startTime) {
+        requestAnimationFrame(animate);
+
+        const t = performance.now() * 0.001;
+        gl.viewport(0, 0, c.width, c.height);
+        gl.clearColor(0., 0., 0., 0.);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.disable(gl.DEPTH_TEST);
+
+        // (TIME+RES) uniforms for shader glow/vignette
+        gl.uniform1f(u_time, t);
+        gl.uniform2f(u_resolution, c.width, c.height);
+
+        // =========================
+        // (BUBBLES) update/spawn/draw as POINTS
+        // =========================
+        if (Math.random() < 0.1) spawnBubble();       // occasional spawn
+        updateBubbles();
+        drawBubbles();
+
+        // =========================
+        // (PELLETS) update/draw as POINTS
+        // =========================
+        drawPellets();
+
+        // =========================
+        // (FISH) movement, steering, collisions, draw
+        // =========================
+        const N = all_fish.length;
+        const viewScaleY = 1.0; // easy knob for wave height
+
+        // (CTRL) keyboard: steer big fish (index 0)
+        const big = all_fish[0];
+        const bigOffset = big[4];
+        if (input.left) bigOffset[0] -= 0.02;
+        if (input.right) bigOffset[0] += 0.02;
+        if (input.up) bigOffset[1] += 0.02;
+        if (input.down) bigOffset[1] -= 0.02;
+
+        // (MOVE) each fish swims with wiggle; pellets attract
+        for (let r = 0; r < N; r++) {
+            const f = all_fish[r];
+            const vbuf = f[0], ibuf = f[1], eyeb = f[2];
+            let col = f[3];
+            const off = f[4];
+            const scl = f[5];
+            let dir = f[6];
+            let wave = f[7];
+
+            // Base swim forward + random wiggle
+            off[0] += 0.01;
+            off[1] += (0.1 * Math.random() - 0.1 * Math.random()) * 0.2;
+
+            // (WAVE) sinusoidal vertical current
+            off[1] += 0.008 * Math.sin(t * 2.0 + wave) * viewScaleY;
+
+            // (WALL WRAP) like assignment: re-appear from left once reaching right
+            if (off[0] >= 1.0) dir = -1;
+            off[0] *= dir;
+            f[6] = dir;
+
+            // (FEED) steer toward nearest pellet a little
+            if (pellets.length > 0) {
+                let nearest = 0, nd = 1e9;
+                for (let i = 0; i < pellets.length; i++) {
+                    const dx = pellets[i].pos[0] - off[0];
+                    const dy = pellets[i].pos[1] - off[1];
+                    const d2 = dx * dx + dy * dy;
+                    if (d2 < nd) { nd = d2; nearest = i; }
+                }
+                const p = pellets[nearest];
+                const dx = p.pos[0] - off[0];
+                const dy = p.pos[1] - off[1];
+                const mag = Math.max(Math.hypot(dx, dy), 0.0001);
+                const steer = 0.005; // how strongly fish is attracted
+                off[0] += steer * (dx / mag);
+                off[1] += steer * (dy / mag);
+
+                // If close enough: "eat" pellet
+                if (mag < 0.04) {
+                    pellets.splice(nearest, 1);
+                    fedCount++;
+                    document.getElementById('fed').textContent = fedCount;
+                    playSound('eat');
+                }
+            }
+
+            // (COLOR) pulsating blue-ish for small fish; keep big one red
+            if (r !== 0) {
+                const a = 0.6 + 0.4 * Math.sin(t * 2.0);
+                col = new Float32Array([
+                    0.3 + 0.2 * Math.sin(t + 0.0),
+                    0.6 + 0.2 * Math.sin(t + 2.0),
+                    0.9 + 0.1 * Math.sin(t + 4.0),
+                    a
+                ]);
+            } else {
+                col = new Float32Array([1.0, 0.0, 0.0, 0.7]);
+            }
+
+            // (COLLISION) cheap neighbor bounce: compare with a few neighbors
+            // NOTE: O(N) local checks; good enough for ~100 fish
+            if (r + 1 < N) {
+                const n = all_fish[r + 1];
+                const noff = n[4];
+                const dx = off[0] - noff[0], dy = off[1] - noff[1];
+                const d2 = dx * dx + dy * dy;
+                const minD = 0.03 + (scl + n[5]) * 0.5 * 0.02;
+                if (d2 < minD * minD) {
+                    f[6] *= -1; // flip direction
+                    n[6] *= -1;
+                    // small push to separate
+                    off[0] += dx * 0.01; off[1] += dy * 0.01;
+                    noff[0] -= dx * 0.01; noff[1] -= dy * 0.01;
+                    playSound('bump');
+                }
+            }
+
+            // (ROTATION) mild random spin each frame
+            const theta = (Math.random() * 10.0) * Math.PI / 180.0;
+            const cth = Math.cos(theta), sth = Math.sin(theta);
+
+            const sdir = dir * scl;
+            const transform = new Float32Array([
+                sdir * cth, sth, 0, 0,
+                -sth, sdir * cth, 0, 0,
+                0, 0, sdir * 1.0, 0,
+                off[0], off[1], off[2] || 0.0, 1
+            ]);
+
+            // ---- draw triangles ----
+            gl.bindBuffer(gl.ARRAY_BUFFER, vbuf);
+            gl.enableVertexAttribArray(a_position);
+            gl.vertexAttribPointer(a_position, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibuf);
+            gl.uniformMatrix4fv(u_transform, false, transform);
+            gl.uniform4fv(u_color, col);
+            gl.uniform1f(u_pointsize, 1.0); // not used for triangles
+            gl.drawElements(gl.TRIANGLES, 15, gl.UNSIGNED_BYTE, 0);
+
+            // ---- draw eye (POINT) ----
+            gl.uniform4fv(u_color, new Float32Array([0.0, 0.0, 0.0, 0.55]));
+            gl.uniform1f(u_pointsize, scl * 20.0);
+            gl.bindBuffer(gl.ARRAY_BUFFER, eyeb);
+            gl.enableVertexAttribArray(a_position);
+            gl.vertexAttribPointer(a_position, 3, gl.FLOAT, false, 0, 0);
+            gl.drawArrays(gl.POINTS, 0, 1);
+        }
+
+        // =========================
+        // (ADVANCED/BOIDS) — scaffold only
+        // =========================
+        // TODO: For flocking, compute for each fish the average neighbor heading
+        // (alignment), average neighbor position (cohesion), and short-range
+        // separation to avoid crowding. Then add a small velocity change toward
+        // those vectors each frame. Keep magnitudes small so it stays smooth.
+        // (We can wire this up later if you want!)
+    }
+
+    // =========================
+    // BUBBLES
+    // =========================
+    function spawnBubble() {
+        bubbles.push({
+            pos: [Math.random() * 2 - 1, -1.0, 0.0],   // start bottom
+            size: 4 + Math.random() * 6,
+            speed: 0.003 + Math.random() * 0.004,
+            drift: (Math.random() * 0.004 - 0.002)
+        });
+    }
+    function updateBubbles() {
+        for (let i = bubbles.length - 1; i >= 0; i--) {
+            const b = bubbles[i];
+            b.pos[1] += b.speed;
+            b.pos[0] += b.drift * Math.sin(performance.now() * 0.001 + i);
+            if (b.pos[1] > 1.05) { bubbles.splice(i, 1); }
+        }
+    }
+    function drawBubbles() {
+        for (const b of bubbles) {
+            // Make a 1-vertex buffer on the fly (tiny & fine for a few particles)
+            const buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(b.pos), gl.STATIC_DRAW);
+
+            // Identity transform to place the point directly
+            const transform = new Float32Array([
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                b.pos[0], b.pos[1], b.pos[2], 1
+            ]);
+
+            gl.uniformMatrix4fv(u_transform, false, transform);
+            gl.uniform4fv(u_color, new Float32Array([0.75, 0.90, 1.0, 0.35])); // soft blue bubble
+            gl.uniform1f(u_pointsize, b.size);
+
+            gl.enableVertexAttribArray(a_position);
+            gl.vertexAttribPointer(a_position, 3, gl.FLOAT, false, 0, 0);
+            gl.drawArrays(gl.POINTS, 0, 1);
+
+            gl.deleteBuffer(buf);
+        }
+    }
+
+    // =========================
+    // PELLETS (FEEDING)
+    // =========================
+    function drawPellets() {
+        for (const p of pellets) {
+            const buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(p.pos), gl.STATIC_DRAW);
+
+            const transform = new Float32Array([
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                p.pos[0], p.pos[1], p.pos[2], 1
+            ]);
+
+            gl.uniformMatrix4fv(u_transform, false, transform);
+            gl.uniform4fv(u_color, new Float32Array([1.0, 0.9, 0.2, 0.9])); // yellow pellet
+            gl.uniform1f(u_pointsize, p.size);
+
+            gl.enableVertexAttribArray(a_position);
+            gl.vertexAttribPointer(a_position, 3, gl.FLOAT, false, 0, 0);
+            gl.drawArrays(gl.POINTS, 0, 1);
+
+            gl.deleteBuffer(buf);
+        }
+    }
+
+    // =========================
+    // SOUND FX (simple)
+    // =========================
+    function playSound(type) {
+        const el = document.getElementById(type === 'eat' ? 'sndEat' :
+            type === 'bump' ? 'sndBump' : 'sndPellet');
+        if (!el) return;
+        el.currentTime = 0;
+        el.volume = (type === 'bump') ? 0.15 : 0.25;
+        el.play().catch(() => { /* ignore autoplay errors */ });
+    }
+
+    // =========================
+    // RESIZE HANDLING
+    // =========================
+    window.addEventListener('resize', () => {
+        c.width = window.innerWidth; c.height = window.innerHeight;
+        gl.viewport(0, 0, c.width, c.height);
+    });
+</script>
+
+<body>
+    <!-- (PARALLAX) -->
+    <div class="parallax"></div>
+
+    <!-- (HUD) score & tips -->
+    <div class="hud">
+        <div><strong>Fish fed:</strong> <span id="fed">0</span></div>
+        <div style="margin-top:6px;">
+            <strong>Controls:</strong>
+            <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move big fish,
+            click to drop food pellets.
+        </div>
+    </div>
+
+    <canvas id="c"></canvas>
+
+    <!-- (SOUNDS) tiny WAVs/OGGs recommended; using data-URIs would also work -->
+    <!-- You can replace src with your own files; kept empty to avoid 404s in template.
+       Tip: add small bubble/pop .wav files next to index.html and set their src. -->
+    <audio id="sndPellet" preload="auto" src=""></audio>
+    <audio id="sndEat" preload="auto" src=""></audio>
+    <audio id="sndBump" preload="auto" src=""></audio>
+</body>
+
+</html>
