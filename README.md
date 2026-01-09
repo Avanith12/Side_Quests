@@ -1,2 +1,2 @@
 # Side_Quests
-Details coming Soon 
+DETAILS COMING SOON ...
